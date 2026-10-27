@@ -145,12 +145,12 @@ def main():
             stored.update(new)
             bot.log("state saved")
 
+    b.refresh_schedule()            # load the schedule first, so /status knows the next game
     try:
         b.handle_updates(0)
     except Exception as e:
         bot.log(f"telegram updates failed: {e}")
 
-    b.refresh_schedule()
     try:
         b.maybe_remind()
     except Exception as e:
