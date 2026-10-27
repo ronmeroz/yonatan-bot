@@ -157,6 +157,9 @@ def main():
         bot.log(f"reminder error: {e}")
     persist()
 
+    print(f"::notice::subscribers: {len(b.subscribers())} "
+          f"({sum(1 for c in b.subscribers() if c.startswith('-'))} group, "
+          f"{sum(1 for c in b.subscribers() if not c.startswith('-'))} private)")
     g = bot.game_to_watch(b.cfg, b.games, set(b.state["done_games"]))
     if not g:
         nxt = bot.next_game(b.games)
