@@ -2,7 +2,7 @@ name: Yonatan alerts
 
 on:
   schedule:
-    - cron: "4,14,24,34,44,54 * * * *"   # every 10 minutes (off the busy :00 mark)
+    - cron: "7,17,27,37,47,57 * * * *"   # every 10 minutes (off the busy :00 mark)
   workflow_dispatch:
     inputs:
       check:
