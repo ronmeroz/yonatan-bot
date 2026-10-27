@@ -28,7 +28,31 @@ STATE_ENC = os.path.join(HERE, "state.enc")
 CLOUD_SETTINGS = {
     "watch_before_minutes": 60,     # scheduled runs can start a few minutes late
     "poll_seconds": 10,
+    "max_game_hours": 3,            # keeps one run (window + game) inside GitHub's 6-hour limit
 }
+RUN_LIMIT_MIN = 300                 # hand over to a fresh run before GitHub's limit (job timeout 355)
+HANDOVER_IF_WATCH_STARTS_AFTER_MIN = 55
+
+
+def start_next_run():
+    """Queue a fresh run of this workflow (GITHUB_TOKEN may trigger workflow_dispatch)."""
+    import urllib.request
+    repo, gh_token = os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_TOKEN")
+    if not repo or not gh_token:
+        bot.log("can't hand over: GITHUB_REPOSITORY/GITHUB_TOKEN missing")
+        return False
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/actions/workflows/bot.yml/dispatches",
+        data=json.dumps({"ref": os.environ.get("GITHUB_REF_NAME", "main")}).encode(),
+        headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github+json"},
+        method="POST")
+    try:
+        urllib.request.urlopen(req, timeout=20)
+        bot.log("handed over to a fresh run")
+        return True
+    except Exception as e:
+        bot.log(f"hand-over failed: {e}")
+        return False
 
 
 # ------------------------------------------------------------- tiny encryption (stdlib only)
@@ -160,18 +184,56 @@ def main():
     print(f"::notice::subscribers: {len(b.subscribers())} "
           f"({sum(1 for c in b.subscribers() if c.startswith('-'))} group, "
           f"{sum(1 for c in b.subscribers() if not c.startswith('-'))} private)")
-    g = bot.game_to_watch(b.cfg, b.games, set(b.state["done_games"]))
-    if not g:
-        nxt = bot.next_game(b.games)
-        bot.log(f"no game right now. next: {nxt.get('team_name_eng_1')} vs {nxt.get('team_name_eng_2')} "
-                f"{nxt.get('game_date_txt')} {nxt.get('game_time')}" if nxt else "no game right now.")
-        return
-
     import threading
-    threading.Thread(target=b.command_loop, daemon=True).start()   # live /status during the game
-    b.watch(g)
-    persist()
+    import time as _time
+    began = _time.time()
+    elapsed_min = lambda: (_time.time() - began) / 60 + float(os.environ.get("RUN_ELAPSED_OFFSET", 0))
+    listening = False
 
+    def game_today_ahead():
+        now = bot.datetime.now()
+        for g in b.games:
+            if g.get("game_date_txt") == now.strftime("%d/%m/%Y") and g.get("game_time") and g["_start"] \
+                    and str(g.get("ExternalID")) not in set(b.state["done_games"]) \
+                    and now < g["_start"] + bot.timedelta(hours=b.cfg["max_game_hours"]):
+                return g
+        return None
+
+    while True:
+        g = bot.game_to_watch(b.cfg, b.games, set(b.state["done_games"]))
+        if g:
+            if elapsed_min() > HANDOVER_IF_WATCH_STARTS_AFTER_MIN and start_next_run():
+                persist()                     # a fresh run will watch the whole game
+                return
+            if not listening:
+                threading.Thread(target=b.command_loop, daemon=True).start()   # live /status during the game
+            b.watch(g)
+            persist()
+            return
+
+        if not game_today_ahead():
+            nxt = bot.next_game(b.games)
+            bot.log(f"no game right now. next: {nxt.get('team_name_eng_1')} vs {nxt.get('team_name_eng_2')} "
+                    f"{nxt.get('game_date_txt')} {nxt.get('game_time')}" if nxt else "no game right now.")
+            return
+
+        # Game day: don't rely on GitHub's (sometimes late) scheduler - stay up until the game.
+        if not listening:
+            listening = True
+            bot.log("game day - staying up until tip-off")
+            threading.Thread(target=b.command_loop, daemon=True).start()
+        if elapsed_min() > RUN_LIMIT_MIN:
+            persist()
+            start_next_run()
+            return
+        _time.sleep(60)
+        try:
+            b.maybe_remind()              # covers runs that started before 10:00
+        except Exception as e:
+            bot.log(f"reminder error: {e}")
+        if int(elapsed_min()) % 10 == 0:
+            b.refresh_schedule()
+            persist()
 
 if __name__ == "__main__":
     main()

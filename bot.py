@@ -570,7 +570,7 @@ class Bot:
                 errors += 1
                 if errors in (1, 10) or errors % 60 == 0:
                     log(f"game feed not available yet ({errors}): {e}")
-                time.sleep(self.cfg["poll_seconds"] if errors < 30 else 30)
+                time.sleep(self.cfg["poll_seconds"])   # keep checking fast - the lineup appears suddenly
                 continue
 
             with self.lock:

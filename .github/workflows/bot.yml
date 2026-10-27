@@ -16,16 +16,18 @@ concurrency:
 
 permissions:
   contents: write             # to save the encrypted state file
+  actions: write              # game days: a run can hand over to a fresh run
 
 jobs:
   run:
     runs-on: ubuntu-latest
-    timeout-minutes: 350
+    timeout-minutes: 355
     env:
       TZ: Asia/Jerusalem
       PYTHONIOENCODING: utf-8
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       SEED_CHAT_IDS: ${{ vars.SEED_CHAT_IDS }}
+      GITHUB_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v5
 
