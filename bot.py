@@ -534,9 +534,10 @@ class Bot:
         self.broadcast("\n".join(lines))
 
     def run(self):
+        self.refresh_schedule()         # before answering commands, so /status knows the next game
+        last_sched = time.time()
         threading.Thread(target=self.command_loop, daemon=True).start()
         log("bot running")
-        last_sched = 0
         while True:
             if time.time() - last_sched > 600:
                 self.refresh_schedule()
