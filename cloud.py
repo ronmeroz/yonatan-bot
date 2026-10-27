@@ -86,16 +86,34 @@ def save_state(token, state, previous):
 def main():
     token = os.environ.get("TELEGRAM_TOKEN", "").strip()
     if "--check" in sys.argv:
-        ok = bot.check_feed()
+        ok = True
+
+        def note(good, text):
+            nonlocal ok
+            ok = ok and good
+            print(f"::{'notice' if good else 'error'}::{'OK' if good else 'FAILED'} - {text}")
+
+        try:
+            games = bot.team_games(bot.DEFAULTS, bot.http_get_json(bot.SCHEDULE_URL))
+            note(bool(games), f"league schedule ({len(games)} Ramat Gan games)")
+            past = [g for g in games if (g.get("score_team1") or g.get("score_team2")) and str(g.get("ExternalID", "0")) != "0"]
+            if past:
+                d = bot.http_get_json(bot.GAME_URL.format(ext=past[-1]["ExternalID"]))
+                n = len((d.get("actions") or {}).get("actions") or [])
+                note(n > 0, f"live-stats feed (game {past[-1]['ExternalID']}: {n} events)")
+            nxt = bot.next_game(games)
+            if nxt:
+                note(True, f"next game: {nxt.get('team_name_eng_1')} vs {nxt.get('team_name_eng_2')} {nxt.get('game_date_txt')} {nxt.get('game_time')}")
+        except Exception as e:
+            note(False, f"league site: {e}")
         if token:
             try:
                 me = bot.Telegram(token).call("getMe")
-                print(f"Telegram OK - bot is @{me['username']}")
+                note(True, f"Telegram token (bot @{me['username']})")
             except Exception as e:
-                print(f"Telegram FAILED: {e}")
-                ok = False
+                note(False, f"Telegram token: {e}")
         else:
-            print("TELEGRAM_TOKEN secret is not set yet.")
+            note(False, "TELEGRAM_TOKEN secret is not set")
         sys.exit(0 if ok else 1)
 
     if not token:
