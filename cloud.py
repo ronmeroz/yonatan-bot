@@ -32,6 +32,7 @@ CLOUD_SETTINGS = {
 }
 RUN_LIMIT_MIN = 300                 # hand over to a fresh run before GitHub's limit (job timeout 355)
 HANDOVER_IF_WATCH_STARTS_AFTER_MIN = 55
+HOLD_BEFORE_HOURS = 20
 
 
 def start_next_run():
@@ -191,11 +192,13 @@ def main():
     listening = False
 
     def game_today_ahead():
+        # Stay up from HOLD_BEFORE_HOURS before tip-off: GitHub's scheduler can leave gaps of several
+        # hours, so we don't count on it firing close to the game.
         now = bot.datetime.now()
         for g in b.games:
-            if g.get("game_date_txt") == now.strftime("%d/%m/%Y") and g.get("game_time") and g["_start"] \
-                    and str(g.get("ExternalID")) not in set(b.state["done_games"]) \
-                    and now < g["_start"] + bot.timedelta(hours=b.cfg["max_game_hours"]):
+            if g.get("game_time") and g["_start"] and str(g.get("ExternalID")) not in set(b.state["done_games"]) \
+                    and g["_start"] - bot.timedelta(hours=HOLD_BEFORE_HOURS) <= now \
+                    < g["_start"] + bot.timedelta(hours=b.cfg["max_game_hours"]):
                 return g
         return None
 
@@ -220,7 +223,7 @@ def main():
         # Game day: don't rely on GitHub's (sometimes late) scheduler - stay up until the game.
         if not listening:
             listening = True
-            bot.log("game day - staying up until tip-off")
+            bot.log("game within 20 hours - staying up until tip-off")
             threading.Thread(target=b.command_loop, daemon=True).start()
         if elapsed_min() > RUN_LIMIT_MIN:
             persist()
