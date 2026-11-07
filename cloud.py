@@ -36,24 +36,13 @@ HOLD_BEFORE_HOURS = 20
 
 
 def start_next_run():
-    """Queue a fresh run of this workflow (GITHUB_TOKEN may trigger workflow_dispatch)."""
-    import urllib.request
-    repo, gh_token = os.environ.get("GITHUB_REPOSITORY"), os.environ.get("GITHUB_TOKEN")
-    if not repo or not gh_token:
-        bot.log("can't hand over: GITHUB_REPOSITORY/GITHUB_TOKEN missing")
-        return False
-    req = urllib.request.Request(
-        f"https://api.github.com/repos/{repo}/actions/workflows/bot.yml/dispatches",
-        data=json.dumps({"ref": os.environ.get("GITHUB_REF_NAME", "main")}).encode(),
-        headers={"Authorization": f"Bearer {gh_token}", "Accept": "application/vnd.github+json"},
-        method="POST")
-    try:
-        urllib.request.urlopen(req, timeout=20)
-        bot.log("handed over to a fresh run")
-        return True
-    except Exception as e:
-        bot.log(f"hand-over failed: {e}")
-        return False
+    """Ask the workflow to start a fresh run - but only AFTER this run's state is saved.
+    (Dispatching from here let the next run start before our state was pushed, so it read
+    stale state - e.g. it didn't know today's reminder was already sent.)"""
+    with open(os.path.join(HERE, ".handover"), "w") as f:
+        f.write("1")
+    bot.log("hand-over requested (runs after state is saved)")
+    return True
 
 
 # ------------------------------------------------------------- tiny encryption (stdlib only)

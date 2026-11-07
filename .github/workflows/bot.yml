@@ -49,7 +49,19 @@ jobs:
           if [ -n "$(git status --porcelain state.enc)" ]; then
             git config user.name "yonatan-bot"
             git config user.email "yonatan-bot@users.noreply.github.com"
-            git add state.enc
-            git commit -m "state update" -q
-            for i in 1 2 3; do git pull --rebase -q && git push -q && break; sleep 5; done
+            cp state.enc /tmp/state.enc
+            for i in 1 2 3 4 5; do
+              # this run's state is the newest - always put it on top of whatever is on GitHub
+              git fetch -q origin main && git reset -q --hard origin/main && cp /tmp/state.enc state.enc
+              git add state.enc
+              git diff --cached --quiet && break
+              git commit -qm "state update" && git push -q origin HEAD:main && break
+              sleep 5
+            done
           fi
+
+      - name: Hand over to a fresh run
+        if: ${{ always() && hashFiles('.handover') != '' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run bot.yml --ref main -R "$GITHUB_REPOSITORY"
