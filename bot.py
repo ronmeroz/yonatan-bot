@@ -40,6 +40,7 @@ DEFAULTS = {
 
 PERIOD_START_TIMES = {"10:00", "05:00"}
 SETTLE_TIMEOUT_SEC = 120
+FLIP_HOLD_SEC = 10   # hold a sub ~1 poll so the stat crew's quick in/out corrections cancel out
 PLAY_TYPES = {"shot", "freeThrow", "foul", "turnover", "rebound", "steal", "block", "jumpBall", "timeout"}
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/130.0 Safari/537.36")
@@ -185,7 +186,7 @@ class GameWatcher:
         return self.game.get("team_name_1", "")
 
     def score_line(self, action_score=None):
-        bx = (self.last or {}).get("boxscore", {}).get("gameInfo", {})
+        bx = (((self.last or {}).get("boxscore") or {}).get("gameInfo") or {})
         hs, as_ = bx.get("homeScore", "0"), bx.get("awayScore", "0")
         if action_score and "-" in str(action_score):
             as_, hs = str(action_score).split("-", 1)      # feed lists "away-home"
@@ -196,7 +197,7 @@ class GameWatcher:
     def player_box(self):
         if not self.last or not self.side or not self.player_id:
             return None
-        for p in (self.last.get("boxscore", {}).get(self.side + "Team") or {}).get("players") or []:
+        for p in (((self.last.get("boxscore") or {}).get(self.side + "Team")) or {}).get("players") or []:
             if str(p.get("playerId")) == self.player_id:
                 return p
         return None
@@ -212,7 +213,7 @@ class GameWatcher:
         return " · ".join(parts)
 
     def live_clock(self):
-        bx = (self.last or {}).get("boxscore", {}).get("gameInfo", {})
+        bx = (((self.last or {}).get("boxscore") or {}).get("gameInfo") or {})
         q = bx.get("currentQuarter") or 0
         t = bx.get("currentQuarterTime") or {}
         return f"{fmt_period(q)} · {int(t.get('m', 0))}:{int(t.get('s', 0)):02d}"
@@ -266,7 +267,7 @@ class GameWatcher:
                 if prm.get("made") == "made":
                     trip["last"] = a
 
-        if (d.get("boxscore", {}).get("gameInfo", {}) or {}).get("gameFinished"):
+        if (((d.get("boxscore") or {}).get("gameInfo")) or {}).get("gameFinished"):
             self.finished = True
 
         timed = self._resolve(force=silent or self.finished) + score_msgs + \
@@ -330,8 +331,7 @@ class GameWatcher:
             if self._is_period_start(ev):
                 q = ev["q"]
                 # Q1 lineup: nothing to cancel out yet, so announce the moment it appears
-                settled = q == 1 or q in self.quarter_started or force or \
-                    time.time() - ev["since"] > SETTLE_TIMEOUT_SEC or \
+                settled = q == 1 or q in self.quarter_started or q in self.quarter_started_seen_play or force or \
                     any(e["q"] != q or not self._is_period_start(e) for e in self.pending[1:])
                 if not settled:
                     break
@@ -345,11 +345,18 @@ class GameWatcher:
                 if self.on_court != before:
                     msgs.append((group[-1]["id"], self._msg(self.on_court, q, group[-1]["qt"], lineup=True)))
             else:
-                self.pending.pop(0)
-                if ev["in"] != self.on_court:
-                    self.on_court = ev["in"]
-                    self.played = self.played or ev["in"]
-                    msgs.append((ev["id"], self._msg(ev["in"], ev["q"], ev["qt"])))
+                if not force and time.time() - ev["since"] < FLIP_HOLD_SEC:
+                    break
+                group = []
+                while self.pending and not self._is_period_start(self.pending[0]) \
+                        and self.pending[0]["q"] == ev["q"] and self.pending[0]["qt"] == ev["qt"] \
+                        and (force or time.time() - self.pending[0]["since"] >= FLIP_HOLD_SEC):
+                    group.append(self.pending.pop(0))
+                last = group[-1]
+                if last["in"] != self.on_court:
+                    self.on_court = last["in"]
+                    self.played = self.played or last["in"]
+                    msgs.append((last["id"], self._msg(last["in"], last["q"], last["qt"])))
         return msgs
 
     def _msg(self, went_in, q, qt, lineup=False):
@@ -376,7 +383,7 @@ class GameWatcher:
         return s + (f"\n{st}" if st else "")
 
     def final_text(self):
-        bx = (self.last or {}).get("boxscore", {}).get("gameInfo", {})
+        bx = (((self.last or {}).get("boxscore") or {}).get("gameInfo") or {})
         s = f"🏁 סיום: {self.score_line()}"
         p = self.player_box()
         if p and (p.get("minutes") not in (None, "", "00:00", "0:00")):
@@ -565,6 +572,9 @@ class Bot:
         while datetime.now() < deadline:
             try:
                 d = http_get_json(GAME_URL.format(ext=ext))
+                if not isinstance(d, dict) or not isinstance(d.get("actions"), dict) \
+                        or not isinstance(d.get("boxscore"), dict) or not isinstance(d.get("gameInfo"), dict):
+                    raise ValueError("incomplete snapshot (feed mid-update)")
                 errors = 0
             except Exception as e:
                 errors += 1
@@ -573,7 +583,8 @@ class Bot:
                 time.sleep(self.cfg["poll_seconds"])   # keep checking fast - the lineup appears suddenly
                 continue
 
-            with self.lock:
+            try:
+              with self.lock:
                 if first:
                     first = False
                     # lineups are entered before tip-off, so only real play means we joined late
@@ -603,6 +614,9 @@ class Bot:
                 if w.finished:
                     self.broadcast(w.final_text())
                     break
+            except Exception as e:
+                import traceback
+                log(f"error handling a snapshot, continuing: {e}\n{traceback.format_exc()}")
             time.sleep(self.cfg["poll_seconds"])
 
         self.state["done_games"] = (self.state["done_games"] + [ext])[-200:]

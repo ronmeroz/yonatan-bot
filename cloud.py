@@ -199,7 +199,14 @@ def main():
                 return
             if not listening:
                 threading.Thread(target=b.command_loop, daemon=True).start()   # live /status during the game
-            b.watch(g)
+            try:
+                b.watch(g)
+            except Exception as e:          # last line of defence: let a fresh run pick the game up
+                import traceback
+                bot.log(f"watch crashed: {e}\n{traceback.format_exc()}")
+                persist()
+                start_next_run()
+                return
             persist()
             return
 
