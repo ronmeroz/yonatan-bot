@@ -9,6 +9,10 @@ on:
         description: "Only test the connection (league site + Telegram)"
         type: boolean
         default: false
+      final_game:
+        description: "Send the final summary of this game id (one-off)"
+        type: string
+        default: ""
 
 concurrency:
   group: yonatan-bot          # never two runs at once; a run watching a game holds the slot
@@ -28,6 +32,7 @@ jobs:
       TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
       SEED_CHAT_IDS: ${{ vars.SEED_CHAT_IDS }}
       GITHUB_TOKEN: ${{ github.token }}
+      FINAL_GAME: ${{ inputs.final_game }}
     steps:
       - uses: actions/checkout@v5
         with:

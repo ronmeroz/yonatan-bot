@@ -135,6 +135,21 @@ def main():
         sys.exit(1)
 
     stored = load_state(token)
+
+    final_ext = os.environ.get("FINAL_GAME", "").strip()
+    if final_ext:                                  # one-off: (re)send the final summary of a game
+        cfg = dict(bot.DEFAULTS, **CLOUD_SETTINGS, telegram_token=token, chat_ids=stored.get("chat_ids") or [])
+        b = bot.Bot(cfg)
+        b.refresh_schedule()
+        g = next(x for x in b.games if str(x.get("ExternalID")) == final_ext)
+        w = bot.GameWatcher(cfg, g)
+        w.process(bot.http_get_json(bot.GAME_URL.format(ext=final_ext)), silent=True)
+        if not w.finished:
+            print(f"::error::game {final_ext} isn't finished in the feed")
+            sys.exit(1)
+        b.broadcast(w.final_text())
+        print(f"::notice::sent final of game {final_ext} to {len(b.subscribers())} chats: {w.final_text()}")
+        return
     work = tempfile.mkdtemp()
     bot.CONFIG_PATH = os.path.join(work, "config.json")
     bot.STATE_PATH = os.path.join(work, "state.json")
